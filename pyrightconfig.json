@@ -1,0 +1,18 @@
+{
+  "include": ["preframr_audio"],
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic",
+  "reportPrivateImportUsage": "none",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportOptionalSubscript": "none",
+  "reportCallIssue": "none",
+  "reportOptionalCall": "none",
+  "reportAssignmentType": "none",
+  "reportOperatorIssue": "none",
+  "reportMissingImports": "none",
+  "reportInvalidTypeForm": "none",
+  "reportIndexIssue": "none",
+  "reportGeneralTypeIssues": "none"
+}
