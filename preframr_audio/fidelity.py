@@ -196,18 +196,23 @@ def read_wav(path: Path) -> Tuple[int, np.ndarray]:
     return int(sr), samples
 
 
-def _irq_from_df(df) -> int:
-    """Pull the IRQ rate from the first FRAME_REG row's diff column."""
-    from preframr_tokens.stfconstants import FRAME_REG
+_IRQ_MISSING_SENTINEL = -1
 
-    frame_rows = df[df["reg"] == FRAME_REG]
-    if frame_rows.empty:
+
+def _irq_from_df(df) -> int:
+    """Pull the IRQ rate from the first FRAME row's diff column. Raises if no FRAME rows present (audio pipeline needs the PAL/NTSC cadence to be explicit, not defaulted)."""
+    from preframr_tokens.reglog_helpers import (
+        read_initial_irq,
+    )  # pylint: disable=import-outside-toplevel
+
+    irq = read_initial_irq(df, default=_IRQ_MISSING_SENTINEL)
+    if irq == _IRQ_MISSING_SENTINEL:
         raise ValueError(
-            "df has no FRAME_REG rows; cannot determine IRQ. The audio "
+            "df has no FRAME rows; cannot determine IRQ. The audio "
             "pipeline needs at least one frame marker to know the PAL/NTSC "
             "cadence."
         )
-    return int(frame_rows["diff"].iloc[0])
+    return irq
 
 
 def assert_dfs_render_equivalent(
