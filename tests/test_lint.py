@@ -48,3 +48,20 @@ def test_black_check_clean():
         f"--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"
     )
+
+
+@pytest.mark.skipif(not _have("pylint"), reason="pylint not installed")
+def test_pylint_clean():
+    """``pylint`` must report no findings on src + tests. The pyproject.toml ``[tool.pylint.main]`` enable list defines which checks are active -- this test covers the gap where ruff doesn't flag pylint-only findings (e.g. W0612 unused-variable on tuple-unpacked assignments)."""
+    result = subprocess.run(
+        ["pylint", *LINT_TARGETS],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "pylint found issues:\n"
+        f"--- stdout ---\n{result.stdout}\n"
+        f"--- stderr ---\n{result.stderr}"
+    )

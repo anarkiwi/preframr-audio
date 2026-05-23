@@ -104,7 +104,7 @@ def spectral_features(samples: np.ndarray, sample_rate: int) -> np.ndarray:
         s = s / peak
     win_ms = DEFAULT_WIN_MS
     hop_ms = DEFAULT_HOP_MS
-    power, n_fft = _stft_power(s, sample_rate, win_ms, hop_ms)
+    power, _n_fft = _stft_power(s, sample_rate, win_ms, hop_ms)
     freqs = np.linspace(0.0, sample_rate / 2.0, power.shape[1])
     power_sum = power.sum(axis=1) + 1e-12
     centroid_per_frame = (power * freqs[None, :]).sum(axis=1) / power_sum
