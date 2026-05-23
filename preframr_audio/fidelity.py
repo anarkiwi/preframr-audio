@@ -176,8 +176,9 @@ def render_df_to_wav(df, irq: int, args, wav_path: Path) -> Tuple[int, "object"]
     Returns ``(n_samples_written, df_audio)`` so callers can assert on
     the prepared df shape if needed.
     """
-    from preframr_audio.audio_driver import render_to_wav
     from preframr_tokens.reglogparser import prepare_df_for_audio
+
+    from preframr_audio.audio_driver import render_to_wav
     from preframr_audio.sidwav import sidq
 
     df_audio, reg_widths = prepare_df_for_audio(df, {}, irq, sidq(), strict=False)

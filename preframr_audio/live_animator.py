@@ -244,7 +244,7 @@ class LiveAnimator:
             for v, vs in enumerate(self.state):
                 if vs.absorb_op(op.reg, op.val, v):
                     break
-        for vs, burst in zip(self.state, self.bursts):
+        for vs, burst in zip(self.state, self.bursts, strict=False):
             vs.history.append(vs.freq())
             burst.update(vs)
             vs.snapshot_prev()

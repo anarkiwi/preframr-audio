@@ -6,6 +6,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
+from preframr_audio._sid_constants import DELAY_REG, FRAME_REG, MODE_VOL_REG
 from preframr_audio.audio_driver import (
     ASID_MANID,
     ASID_REG_TO_SLOT,
@@ -15,14 +16,13 @@ from preframr_audio.audio_driver import (
     FrameOp,
     FramePacket,
     SampleRing,
-    _OpCollector,
     _default_reg_start,
+    _OpCollector,
     _reg_start_init_ops,
     decode_asid_update,
     df_to_packets,
     encode_asid_update,
 )
-from preframr_audio._sid_constants import DELAY_REG, FRAME_REG, MODE_VOL_REG
 
 _NO_FREQ_MAPPER = None
 

@@ -3,15 +3,16 @@
 import io
 import unittest
 
+from preframr_audio._sid_constants import VOICE_REG_SIZE, VOICES
 from preframr_audio.audio_driver import FrameOp, FramePacket
 from preframr_audio.live_animator import (
     VOICE_CTRL_REG,
     LiveAnimator,
     VoiceState,
+    _BpsMeter,
+    _MacroBurst,
     voice_of_reg,
 )
-from preframr_audio.live_animator import _BpsMeter, _MacroBurst
-from preframr_audio._sid_constants import VOICE_REG_SIZE, VOICES
 
 
 class TestVoiceState(unittest.TestCase):

@@ -1,7 +1,7 @@
 """Smoke tests for the SID utility helpers in ``preframr_audio.sidwav``."""
 
-from datetime import timedelta
 import unittest
+from datetime import timedelta
 
 import numpy as np
 from pyresidfp import SoundInterfaceDevice

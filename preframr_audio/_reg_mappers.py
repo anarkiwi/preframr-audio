@@ -16,10 +16,10 @@ class FreqMapper:
         n = 0
         self.bits = 0
         while True:
-            l = f * (2 ** ((-cents / 2) / 1200))
-            h = f * (2 ** ((cents / 2) / 1200))
-            lr = round(sid_clock * l)
-            lh = round(sid_clock * h)
+            lo = f * (2 ** ((-cents / 2) / 1200))
+            hi = f * (2 ** ((cents / 2) / 1200))
+            lr = round(sid_clock * lo)
+            lh = round(sid_clock * hi)
             r = round(sid_clock * f)
             if n < 65536:
                 self.if_map[n] = r
@@ -31,6 +31,6 @@ class FreqMapper:
                 self.fi_map[j] = n
             f *= 2 ** (cents / 1200)
             n += 1
-            if l > max_sid_f:
+            if lo > max_sid_f:
                 break
         self.bits = int(len(self.if_map)).bit_length()

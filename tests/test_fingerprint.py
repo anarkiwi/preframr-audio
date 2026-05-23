@@ -75,7 +75,9 @@ class TestResolveFeatureFn:
         assert callable(fn)
 
     def test_callable_passes_through(self):
-        custom = lambda s, sr: np.zeros(3)
+        def custom(_samples, _sr):
+            return np.zeros(3)
+
         fn = _resolve_feature_fn(custom)
         assert fn is custom
 
@@ -144,7 +146,7 @@ class TestFingerprintBatch:
         seqs = [[(0, 4, 0x11)], [(0, 4, 0x21)], [(0, 4, 0x41)]]
         seq = fingerprint_batch(seqs, n_workers=1, feature="mel")
         par = fingerprint_batch(seqs, n_workers=2, feature="mel")
-        for i, (a, b) in enumerate(zip(seq, par)):
+        for i, (a, b) in enumerate(zip(seq, par, strict=True)):
             dist = np.linalg.norm(a - b)
             assert (
                 dist < NOISE_FLOOR_NORM
@@ -154,7 +156,7 @@ class TestFingerprintBatch:
         seqs = [[(0, 4, 0x11)], [(0, 4, 0x21)]]
         batch = fingerprint_batch(seqs, n_workers=1, feature="mel")
         per_item = np.stack([fingerprint_writes(s, feature="mel") for s in seqs])
-        for i, (a, b) in enumerate(zip(batch, per_item)):
+        for i, (a, b) in enumerate(zip(batch, per_item, strict=True)):
             dist = np.linalg.norm(a - b)
             assert (
                 dist < NOISE_FLOOR_NORM

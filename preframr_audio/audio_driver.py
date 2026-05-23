@@ -668,7 +668,7 @@ class AsidServer:  # pragma: no cover
         self.chip_model = chip_model
         self.idle_timeout = idle_timeout
         self.midi_in = None
-        self.queue: "Queue" = None  # type: ignore  -- set in open()
+        self.queue = None  # type: ignore  -- set in open()
         self.worker = None
         self.sink: Optional[WavSampleSink] = None
         self.sid = None
@@ -868,8 +868,8 @@ def _default_reg_start():
     """
     from preframr_audio._sid_constants import (  # noqa: WPS433
         MODE_VOL_REG,
-        VOICES,
         VOICE_REG_SIZE,
+        VOICES,
     )
 
     rs: Dict[int, int] = {}

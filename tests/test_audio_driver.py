@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 import scipy.io.wavfile
 
+from preframr_audio._reg_mappers import FreqMapper
 from preframr_audio.audio_driver import (
+    _HAVE_RTMIDI,
     ASID_MANID,
     ASID_REG_TO_SLOT,
     ASID_SLOT_TO_REG,
@@ -28,7 +30,6 @@ from preframr_audio.audio_driver import (
     SampleRing,
     WavSampleSink,
     _default_reg_start,
-    _HAVE_RTMIDI,
     _OpCollector,
     _reg_start_init_ops,
     decode_asid_update,
@@ -36,7 +37,6 @@ from preframr_audio.audio_driver import (
     encode_asid_update,
     render_to_wav,
 )
-from preframr_audio._reg_mappers import FreqMapper
 from preframr_audio.sidwav import sidq
 
 
