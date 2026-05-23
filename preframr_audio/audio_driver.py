@@ -928,20 +928,17 @@ def _drive(
     return n_frames
 
 
-def render_to_wav(
+def render_to_samples(
     df,
-    wav_path: str,
     reg_widths,
     irq,
     cents: int = 50,
     reg_start: Optional[Dict[int, int]] = None,
     chip_model: str = "MOS8580",
-    descriptions: Optional[List[str]] = None,
-    progress: bool = False,
-):
-    """Offline render: prepared-for-audio df -> wav file."""
+    progress_label: str = "",
+) -> Tuple[np.ndarray, int]:
+    """In-memory offline render: prepared-for-audio df -> (samples_int16, sample_rate). Shares the wav and real-time entries' worker plumbing without the file write or threading-buffer backpressure."""
     from preframr_audio._reg_mappers import FreqMapper  # noqa: WPS433
-    from scipy.io import wavfile  # noqa: WPS433
 
     if not _HAVE_RESID:
         raise RuntimeError("pyresidfp not installed; pip install pyresidfp")
@@ -962,15 +959,40 @@ def render_to_wav(
             irq,
             reg_start,
             clock_frequency=worker.clock_frequency,
-            progress_label=(
-                (descriptions[0] if descriptions else "render") if progress else ""
-            ),
+            progress_label=progress_label,
         )
     finally:
         buffer.close()
         worker.join(timeout=60.0)
-    samples = sink.to_array()
-    wavfile.write(wav_path, int(worker.sampling_frequency), samples)
+    return sink.to_array(), int(worker.sampling_frequency)
+
+
+def render_to_wav(
+    df,
+    wav_path: str,
+    reg_widths,
+    irq,
+    cents: int = 50,
+    reg_start: Optional[Dict[int, int]] = None,
+    chip_model: str = "MOS8580",
+    descriptions: Optional[List[str]] = None,
+    progress: bool = False,
+):
+    """Offline render: prepared-for-audio df -> wav file. Thin wrapper over ``render_to_samples`` + ``scipy.io.wavfile.write``."""
+    from scipy.io import wavfile  # noqa: WPS433
+
+    samples, sample_rate = render_to_samples(
+        df,
+        reg_widths,
+        irq,
+        cents=cents,
+        reg_start=reg_start,
+        chip_model=chip_model,
+        progress_label=(
+            (descriptions[0] if descriptions else "render") if progress else ""
+        ),
+    )
+    wavfile.write(wav_path, sample_rate, samples)
     return len(samples)
 
 
