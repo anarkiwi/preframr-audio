@@ -175,6 +175,34 @@ def compare_renders(
     )
 
 
+def compare_renders_per_voice(
+    samples_a,
+    samples_b,
+    sample_rate: int,
+    tolerance: float = FRAME_RMS_TOLERANCE,
+    max_frame_drift: int = 1,
+):
+    """Run ``compare_renders`` per voice over two ``{voice: samples}`` maps
+    (e.g. from ``audio_driver.render_per_voice``). Soloed-voice comparison
+    surfaces divergence the full mix masks (a quiet percussion or bass voice
+    is not drowned by a loud lead). Streams are truncated to the shorter
+    length per voice. Returns ``{voice: AudioFidelityResult}``.
+    """
+    results = {}
+    for voice in sorted(set(samples_a) & set(samples_b)):
+        a = np.asarray(samples_a[voice])
+        b = np.asarray(samples_b[voice])
+        n = min(len(a), len(b))
+        results[voice] = compare_renders(
+            a[:n],
+            b[:n],
+            sample_rate,
+            tolerance=tolerance,
+            max_frame_drift=max_frame_drift,
+        )
+    return results
+
+
 def render_df_to_wav(df, irq: int, args, wav_path: Path) -> Tuple[int, "object"]:
     """Render ``df`` to a WAV file via the production audio path.
     Returns ``(n_samples_written, df_audio)`` so callers can assert on

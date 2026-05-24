@@ -10,6 +10,7 @@ from preframr_audio.fidelity import (
     PAL_FRAME_HZ,
     AudioFidelityResult,
     compare_renders,
+    compare_renders_per_voice,
 )
 
 SAMPLE_RATE = 44100
@@ -85,6 +86,25 @@ def test_max_frame_drift_relaxes_cadence_gate():
     relaxed = compare_renders(a, b, SAMPLE_RATE, max_frame_drift=3)
     assert relaxed.shape != "FRAME_CADENCE_BREAK"
     assert abs(relaxed.lag_samples - shift) <= fw
+
+
+def test_compare_renders_per_voice_flags_only_divergent_voice():
+    a = _signal(DEFAULT_LEN)
+    res = compare_renders_per_voice(
+        {0: a, 1: a, 2: a},
+        {0: a.copy(), 1: _signal(DEFAULT_LEN, seed=999), 2: a.copy()},
+        SAMPLE_RATE,
+    )
+    assert set(res) == {0, 1, 2}
+    assert res[0].passed is True
+    assert res[2].passed is True
+    assert res[1].passed is False
+
+
+def test_compare_renders_per_voice_truncates_to_shorter():
+    a = _signal(DEFAULT_LEN)
+    res = compare_renders_per_voice({0: a}, {0: a[:-5000].copy()}, SAMPLE_RATE)
+    assert res[0].passed is True
 
 
 def test_initial_state_divergence():
