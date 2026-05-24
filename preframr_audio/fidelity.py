@@ -175,6 +175,29 @@ def compare_renders(
     )
 
 
+def per_frame_rel_rms(
+    samples_a,
+    samples_b,
+    sample_rate: int,
+) -> np.ndarray:
+    """Per-PAL-frame relative-RMS difference between two int16 streams, as a
+    1-D array (one value per frame, as a fraction of peak amplitude). Unlike
+    ``compare_renders`` — which returns only the worst frame — this exposes the
+    whole timeline so callers can pinpoint exactly which frames diverge (e.g.
+    ``np.where(per_frame_rel_rms(...) > tolerance)`` and multiply by the frame
+    period for timestamps). Streams are truncated to the shorter length; DC and
+    other common-mode content cancels in the per-frame difference.
+    """
+    a = np.asarray(samples_a)
+    b = np.asarray(samples_b)
+    n = min(len(a), len(b))
+    rms = _per_frame_rms(a[:n], b[:n], _frame_window(sample_rate))
+    if rms.size == 0:
+        return rms
+    peak = max(1.0, float(max(np.abs(a[:n]).max(), np.abs(b[:n]).max())))
+    return rms / peak
+
+
 def compare_renders_per_voice(
     samples_a,
     samples_b,
