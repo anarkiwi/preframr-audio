@@ -243,6 +243,55 @@ def render_df_to_wav(df, irq: int, args, wav_path: Path) -> Tuple[int, "object"]
     return n, df_audio
 
 
+def _render_df_samples(df, *, cents: int = 50, chip_model: str = "MOS8580"):
+    """Render a parsed df straight to ``(samples_int16, sample_rate)`` in memory
+    -- ``prepare_df_for_audio`` then ``render_to_samples``, no WAV/scipy round
+    trip. Shared by ``dfs_render_equivalent`` and the batch helpers."""
+    from preframr_tokens.reglogparser import prepare_df_for_audio
+
+    from preframr_audio.audio_driver import render_to_samples
+    from preframr_audio.sidwav import sidq
+
+    irq = _irq_from_df(df)
+    df_audio, reg_widths = prepare_df_for_audio(df, {}, irq, sidq(), strict=False)
+    return render_to_samples(
+        df_audio, reg_widths=reg_widths, irq=irq, cents=cents, chip_model=chip_model
+    )
+
+
+def dfs_render_equivalent(
+    df_a,
+    df_b,
+    *,
+    cents: int = 50,
+    chip_model: str = "MOS8580",
+    tolerance: float = FRAME_RMS_TOLERANCE,
+    max_frame_drift: int = 1,
+) -> AudioFidelityResult:
+    """In-memory render-equivalence gate for the inaudible-perturbation
+    augmentation family: render both parsed dfs to samples and compare with no
+    WAV/scipy round trip (the ``assert_dfs_render_equivalent`` disk path is for
+    test assertions). Returns the ``AudioFidelityResult`` -- ``.passed`` is the
+    accept/reject signal; non-passing results carry the divergence ``shape`` +
+    ``diagnostic``.
+    """
+    samples_a, sr_a = _render_df_samples(df_a, cents=cents, chip_model=chip_model)
+    samples_b, sr_b = _render_df_samples(df_b, cents=cents, chip_model=chip_model)
+    if sr_a != sr_b:
+        return AudioFidelityResult(
+            passed=False,
+            shape="SAMPLE_RATE_MISMATCH",
+            diagnostic=f"sample-rate divergence: a={sr_a} vs b={sr_b}",
+        )
+    return compare_renders(
+        samples_a,
+        samples_b,
+        sr_a,
+        tolerance=tolerance,
+        max_frame_drift=max_frame_drift,
+    )
+
+
 def read_wav(path: Path) -> Tuple[int, np.ndarray]:
     """Returns (sample_rate, samples_int16). Imported lazily to keep
     the unit-test path off scipy."""
