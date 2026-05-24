@@ -73,6 +73,20 @@ def test_frame_cadence_break():
     assert abs(result.lag_samples - shift) <= fw
 
 
+def test_max_frame_drift_relaxes_cadence_gate():
+    """A 2-frame shift is a cadence break at the default tolerance but not
+    when max_frame_drift admits more frames of lag (it then falls through to
+    the per-frame RMS path instead of the cadence gate)."""
+    fw = _frame_samples()
+    shift = 2 * fw
+    a = _signal(DEFAULT_LEN)
+    b = np.concatenate([np.zeros(shift, dtype=np.int16), a[:-shift]])
+    assert compare_renders(a, b, SAMPLE_RATE).shape == "FRAME_CADENCE_BREAK"
+    relaxed = compare_renders(a, b, SAMPLE_RATE, max_frame_drift=3)
+    assert relaxed.shape != "FRAME_CADENCE_BREAK"
+    assert abs(relaxed.lag_samples - shift) <= fw
+
+
 def test_initial_state_divergence():
     """Noise burst in the head N samples decays into a clean tail ->
     INITIAL_STATE_DIVERGENCE (head-RMS >> tail-RMS)."""
