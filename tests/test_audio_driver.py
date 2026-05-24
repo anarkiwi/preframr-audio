@@ -35,6 +35,7 @@ from preframr_audio.audio_driver import (
     decode_asid_update,
     df_to_packets,
     encode_asid_update,
+    render_per_voice,
     render_to_wav,
 )
 from preframr_audio.sidwav import sidq
@@ -266,6 +267,37 @@ class TestRenderToWav(unittest.TestCase):
             self.assertEqual(rate, 48000)
             self.assertEqual(len(samples), n)
             self.assertGreater(int(np.abs(samples).max()), 100)
+
+    def test_render_per_voice_isolates_active_voices(self):
+        # Only voice 1 is gated; voices 2 and 3 have no writes.
+        df = pd.DataFrame(
+            [
+                (0, 0, 24, 15),
+                (0, 0, 5, 0x09),
+                (0, 0, 6, 0xF4),
+                (0, 0, 0, 0x2000),
+                (0, 0, 4, 0x21),
+            ]
+            + [(0, 19656, -128, 0)] * 6,
+            columns=["op", "diff", "reg", "val"],
+        )
+        df["delay"] = df["diff"] * sidq()
+        rw = {0: 2, 4: 1, 5: 1, 6: 1, 24: 1}
+        voices = render_per_voice(df, reg_widths=rw, irq=19656, cents=50)
+        self.assertEqual(set(voices), {0, 1, 2})
+
+        # Difference cancels the chip's common-mode DC/idle floor. Soloing
+        # voice 1 keeps its gated tone; soloing voice 2 or 3 mutes voice 1's
+        # control reg (gate+waveform), so those render to the bare floor. A
+        # large solo1-vs-solo2 difference with a near-zero solo2-vs-solo3
+        # difference proves the per-voice mute isolates output.
+        def dstd(x, y):
+            n = min(len(x), len(y))
+            return float(np.std(x[:n].astype(np.float64) - y[:n].astype(np.float64)))
+
+        self.assertGreater(dstd(voices[0], voices[1]), 100.0)
+        self.assertGreater(dstd(voices[0], voices[2]), 100.0)
+        self.assertLess(dstd(voices[1], voices[2]), 10.0)
 
     def test_default_reg_start_used_when_none(self):
         df = pd.DataFrame(

@@ -21,6 +21,9 @@ except ImportError:
     SoundInterfaceDevice = None  # type: ignore
     ChipModel = None  # type: ignore
 
+# SID per-voice control register (gate + waveform select): voice v -> 4 + 7*v.
+_VOICE_CTRL_REG = (4, 11, 18)
+
 try:
     import sounddevice as sd
 
@@ -342,6 +345,7 @@ class ResidWorker(threading.Thread):
         sink,
         chip_model: str = "MOS8580",
         on_frame_done: Optional[Callable[[FramePacket, int], None]] = None,
+        mute_voices: Tuple[int, ...] = (),
     ):
         super().__init__(daemon=True)
         if not _HAVE_RESID:
@@ -352,6 +356,9 @@ class ResidWorker(threading.Thread):
         self.sid.reset()
         for _r in range(25):
             self.sid.write_register(_r, 0)
+        self._muted_ctrl_regs = frozenset(
+            _VOICE_CTRL_REG[int(_v)] for _v in mute_voices if 0 <= int(_v) <= 2
+        )
         self.sid.clock(timedelta(seconds=0.05))
         self.on_frame_done = on_frame_done
         self.stop_evt = threading.Event()
@@ -375,7 +382,8 @@ class ResidWorker(threading.Thread):
             frame_samples = 0
             for op in pkt.ops:
                 if op.reg >= 0:
-                    self.sid.write_register(int(op.reg), int(op.val))
+                    val = 0 if int(op.reg) in self._muted_ctrl_regs else int(op.val)
+                    self.sid.write_register(int(op.reg), val)
                 if op.delay_cycles > 0:
                     seconds = op.delay_cycles / self.clock_frequency
                     samples = self.sid.clock(timedelta(seconds=seconds))
@@ -936,8 +944,9 @@ def render_to_samples(
     reg_start: Optional[Dict[int, int]] = None,
     chip_model: str = "MOS8580",
     progress_label: str = "",
+    mute_voices: Tuple[int, ...] = (),
 ) -> Tuple[np.ndarray, int]:
-    """In-memory offline render: prepared-for-audio df -> (samples_int16, sample_rate). Shares the wav and real-time entries' worker plumbing without the file write or threading-buffer backpressure."""
+    """In-memory offline render: prepared-for-audio df -> (samples_int16, sample_rate). Shares the wav and real-time entries' worker plumbing without the file write or threading-buffer backpressure. ``mute_voices`` mutes those SID voice outputs (0-2) while leaving their oscillators running, so soloing one voice still reflects sync/ring coupling from the others."""
     from preframr_audio._reg_mappers import FreqMapper  # noqa: WPS433
 
     if not _HAVE_RESID:
@@ -948,7 +957,9 @@ def render_to_samples(
         reg_start = _default_reg_start()
     buffer = AudioRenderBuffer(max_frames=max(1024, 1))
     sink = WavSampleSink()
-    worker = ResidWorker(buffer, sink=sink, chip_model=chip_model)
+    worker = ResidWorker(
+        buffer, sink=sink, chip_model=chip_model, mute_voices=mute_voices
+    )
     worker.start()
     try:
         _drive(
@@ -977,8 +988,9 @@ def render_to_wav(
     chip_model: str = "MOS8580",
     descriptions: Optional[List[str]] = None,
     progress: bool = False,
+    mute_voices: Tuple[int, ...] = (),
 ):
-    """Offline render: prepared-for-audio df -> wav file. Thin wrapper over ``render_to_samples`` + ``scipy.io.wavfile.write``."""
+    """Offline render: prepared-for-audio df -> wav file. Thin wrapper over ``render_to_samples`` + ``scipy.io.wavfile.write``. ``mute_voices`` mutes those SID voice outputs (0-2) while leaving their oscillators running."""
     from scipy.io import wavfile  # noqa: WPS433
 
     samples, sample_rate = render_to_samples(
@@ -991,9 +1003,40 @@ def render_to_wav(
         progress_label=(
             (descriptions[0] if descriptions else "render") if progress else ""
         ),
+        mute_voices=mute_voices,
     )
     wavfile.write(wav_path, sample_rate, samples)
     return len(samples)
+
+
+def render_per_voice(
+    df,
+    reg_widths,
+    irq,
+    cents: int = 50,
+    reg_start: Optional[Dict[int, int]] = None,
+    chip_model: str = "MOS8580",
+) -> Dict[int, np.ndarray]:
+    """Render each of the 3 SID voices in isolation; return ``{voice:
+    samples_int16}`` for voice 0..2. Each render mutes the other two voices'
+    *outputs* but leaves their oscillators clocking, so a soloed voice still
+    reflects sync/ring coupling from its neighbour and the shared filter.
+    Lets a per-voice fidelity check surface divergence the full mix masks.
+    """
+    out: Dict[int, np.ndarray] = {}
+    for voice in range(3):
+        mute = tuple(v for v in range(3) if v != voice)
+        samples, _sr = render_to_samples(
+            df,
+            reg_widths,
+            irq,
+            cents=cents,
+            reg_start=reg_start,
+            chip_model=chip_model,
+            mute_voices=mute,
+        )
+        out[voice] = samples
+    return out
 
 
 def play_samples(  # pragma: no cover

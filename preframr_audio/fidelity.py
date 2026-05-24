@@ -175,6 +175,57 @@ def compare_renders(
     )
 
 
+def per_frame_rel_rms(
+    samples_a,
+    samples_b,
+    sample_rate: int,
+) -> np.ndarray:
+    """Per-PAL-frame relative-RMS difference between two int16 streams, as a
+    1-D array (one value per frame, as a fraction of peak amplitude). Unlike
+    ``compare_renders`` — which returns only the worst frame — this exposes the
+    whole timeline so callers can pinpoint exactly which frames diverge (e.g.
+    ``np.where(per_frame_rel_rms(...) > tolerance)`` and multiply by the frame
+    period for timestamps). Streams are truncated to the shorter length; DC and
+    other common-mode content cancels in the per-frame difference.
+    """
+    a = np.asarray(samples_a)
+    b = np.asarray(samples_b)
+    n = min(len(a), len(b))
+    rms = _per_frame_rms(a[:n], b[:n], _frame_window(sample_rate))
+    if rms.size == 0:
+        return rms
+    peak = max(1.0, float(max(np.abs(a[:n]).max(), np.abs(b[:n]).max())))
+    return rms / peak
+
+
+def compare_renders_per_voice(
+    samples_a,
+    samples_b,
+    sample_rate: int,
+    tolerance: float = FRAME_RMS_TOLERANCE,
+    max_frame_drift: int = 1,
+):
+    """Run ``compare_renders`` per voice over two ``{voice: samples}`` maps
+    (e.g. from ``audio_driver.render_per_voice``). Soloed-voice comparison
+    surfaces divergence the full mix masks (a quiet percussion or bass voice
+    is not drowned by a loud lead). Streams are truncated to the shorter
+    length per voice. Returns ``{voice: AudioFidelityResult}``.
+    """
+    results = {}
+    for voice in sorted(set(samples_a) & set(samples_b)):
+        a = np.asarray(samples_a[voice])
+        b = np.asarray(samples_b[voice])
+        n = min(len(a), len(b))
+        results[voice] = compare_renders(
+            a[:n],
+            b[:n],
+            sample_rate,
+            tolerance=tolerance,
+            max_frame_drift=max_frame_drift,
+        )
+    return results
+
+
 def render_df_to_wav(df, irq: int, args, wav_path: Path) -> Tuple[int, "object"]:
     """Render ``df`` to a WAV file via the production audio path.
     Returns ``(n_samples_written, df_audio)`` so callers can assert on
