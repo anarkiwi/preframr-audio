@@ -73,9 +73,12 @@ def compare_renders(
     samples_b: np.ndarray,
     sample_rate: int,
     tolerance: float = FRAME_RMS_TOLERANCE,
+    max_frame_drift: int = 1,
 ) -> AudioFidelityResult:
     """Compare two int16 sample streams; return an
-    ``AudioFidelityResult``. Pure-numpy, no I/O.
+    ``AudioFidelityResult``. Pure-numpy, no I/O. ``max_frame_drift`` is
+    the cross-correlation lag, in PAL frames, tolerated before a
+    FRAME_CADENCE_BREAK is declared (default 1 == sample-aligned).
     """
     if samples_a.shape != samples_b.shape:
         return AudioFidelityResult(
@@ -89,14 +92,15 @@ def compare_renders(
 
     fw = _frame_window(sample_rate)
     lag = _estimate_lag(samples_a, samples_b)
-    if abs(lag) >= fw:
+    if abs(lag) >= max(1, max_frame_drift) * fw:
         return AudioFidelityResult(
             passed=False,
             shape="FRAME_CADENCE_BREAK",
             diagnostic=(
                 f"FRAME CADENCE BREAK: cross-corr lag = {lag} samples "
-                f"(~{lag / fw:+.1f} frames at {sample_rate} Hz). Likely a "
-                f"producer/consumer race in audio_driver.AudioRenderBuffer."
+                f"(~{lag / fw:+.1f} frames at {sample_rate} Hz, tolerance "
+                f"{max_frame_drift} frames). Likely a producer/consumer race "
+                f"in audio_driver.AudioRenderBuffer."
             ),
             lag_samples=lag,
         )
@@ -224,6 +228,7 @@ def assert_dfs_render_equivalent(
     label_a: str = "a",
     label_b: str = "b",
     tolerance: float = FRAME_RMS_TOLERANCE,
+    max_frame_drift: int = 1,
 ) -> Optional[AudioFidelityResult]:
     """Render both dfs to disk WAVs, read back, compare. Raise
     AssertionError with the diagnostic on fail; return the result on
@@ -245,7 +250,9 @@ def assert_dfs_render_equivalent(
     sr_a, samples_a = read_wav(wav_a)
     sr_b, samples_b = read_wav(wav_b)
     assert sr_a == sr_b, f"sample-rate divergence: {label_a}={sr_a} vs {label_b}={sr_b}"
-    result = compare_renders(samples_a, samples_b, sr_a, tolerance=tolerance)
+    result = compare_renders(
+        samples_a, samples_b, sr_a, tolerance=tolerance, max_frame_drift=max_frame_drift
+    )
     if not result.passed:
         raise AssertionError(
             f"audio fidelity check {label_a} vs {label_b} failed: "
