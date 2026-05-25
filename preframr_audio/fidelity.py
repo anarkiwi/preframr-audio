@@ -304,7 +304,9 @@ def read_wav(path: Path) -> Tuple[int, np.ndarray]:
 _IRQ_MISSING_SENTINEL = -1
 
 
-_FRAME_REG = -128  # mirrors preframr_tokens.stfconstants.FRAME_REG; replicated to avoid an audio<->tokens import cycle
+# mirrors preframr_tokens.stfconstants.FRAME_REG; replicated to avoid an
+# audio<->tokens import cycle
+_FRAME_REG = -128
 
 
 def _read_initial_irq(df, default: int) -> int:
