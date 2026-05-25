@@ -306,7 +306,7 @@ _IRQ_MISSING_SENTINEL = -1
 
 def _irq_from_df(df) -> int:
     """Pull the IRQ rate from the first FRAME row's diff column. Raises if no FRAME rows present (audio pipeline needs the PAL/NTSC cadence to be explicit, not defaulted)."""
-    from preframr_tokens.reglog_helpers import (
+    from preframr_tokens.reglogparser import (
         read_initial_irq,
     )  # pylint: disable=import-outside-toplevel
 
