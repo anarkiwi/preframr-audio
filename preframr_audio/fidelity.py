@@ -304,13 +304,24 @@ def read_wav(path: Path) -> Tuple[int, np.ndarray]:
 _IRQ_MISSING_SENTINEL = -1
 
 
+# mirrors preframr_tokens.stfconstants.FRAME_REG; replicated to avoid an
+# audio<->tokens import cycle
+_FRAME_REG = -128
+
+
+def _read_initial_irq(df, default: int) -> int:
+    """First FRAME-row positive ``diff`` = the PAL/NTSC frame period in cycles.
+    Local copy of preframr_tokens.reglogparser.read_initial_irq -- trivial, kept
+    here so the render path does not import the parser package (preframr_tokens
+    imports preframr_audio.fidelity, so importing it back would be a cycle)."""
+    positive = df.loc[df["reg"] == _FRAME_REG, "diff"]
+    positive = positive[positive > 0]
+    return int(positive.iloc[0]) if not positive.empty else int(default)
+
+
 def _irq_from_df(df) -> int:
     """Pull the IRQ rate from the first FRAME row's diff column. Raises if no FRAME rows present (audio pipeline needs the PAL/NTSC cadence to be explicit, not defaulted)."""
-    from preframr_tokens.reglog_helpers import (
-        read_initial_irq,
-    )  # pylint: disable=import-outside-toplevel
-
-    irq = read_initial_irq(df, default=_IRQ_MISSING_SENTINEL)
+    irq = _read_initial_irq(df, default=_IRQ_MISSING_SENTINEL)
     if irq == _IRQ_MISSING_SENTINEL:
         raise ValueError(
             "df has no FRAME rows; cannot determine IRQ. The audio "

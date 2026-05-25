@@ -5,6 +5,8 @@ compare logic itself is the already-tested compare_renders."""
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
+import pytest
 
 from preframr_audio import fidelity
 
@@ -48,3 +50,17 @@ def test_duration_mismatch_fails(monkeypatch):
     result = fidelity.dfs_render_equivalent(object(), object())
     assert not result.passed
     assert result.shape == "DURATION_MISMATCH"
+
+
+def test_irq_from_df_reads_frame_diff():
+    """_irq_from_df reads the frame period from the first positive FRAME-row diff
+    via the LOCAL _read_initial_irq (no preframr_tokens import -- audio<->tokens
+    would otherwise be a cycle; the trivial helper is replicated)."""
+    df = pd.DataFrame({"reg": [fidelity._FRAME_REG], "diff": [19656]})
+    assert fidelity._irq_from_df(df) == 19656
+
+
+def test_irq_from_df_raises_without_frame_rows():
+    df = pd.DataFrame({"reg": [0, 1], "diff": [0, 0]})
+    with pytest.raises(ValueError):
+        fidelity._irq_from_df(df)
