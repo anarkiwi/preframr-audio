@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from preframr_audio import fidelity
-from preframr_tokens.stfconstants import FRAME_REG
 
 SR = 44100
 
@@ -53,13 +52,11 @@ def test_duration_mismatch_fails(monkeypatch):
     assert result.shape == "DURATION_MISMATCH"
 
 
-def test_irq_from_df_imports_live_tokens_api():
-    """Regression: _irq_from_df must import read_initial_irq from the live
-    preframr_tokens API. The symbol moved reglog_helpers -> reglogparser in
-    tokens 0.18.0; the stale import silently broke the whole render path
-    (_render_df_samples / dfs_render_equivalent / round-trip gate). Exercises
-    the real cross-package import -- deliberately NOT monkeypatched."""
-    df = pd.DataFrame({"reg": [FRAME_REG], "diff": [19656]})
+def test_irq_from_df_reads_frame_diff():
+    """_irq_from_df reads the frame period from the first positive FRAME-row diff
+    via the LOCAL _read_initial_irq (no preframr_tokens import -- audio<->tokens
+    would otherwise be a cycle; the trivial helper is replicated)."""
+    df = pd.DataFrame({"reg": [fidelity._FRAME_REG], "diff": [19656]})
     assert fidelity._irq_from_df(df) == 19656
 
 
