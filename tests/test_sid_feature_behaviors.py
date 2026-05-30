@@ -193,7 +193,7 @@ def test_attack_depends_on_prior_envelope_state():
 
     short_prior = run(2)
     long_prior = run(20)
-    env_drift = max(abs(a - b) for a, b in zip(short_prior, long_prior))
+    env_drift = max(abs(a - b) for a, b in zip(short_prior, long_prior, strict=False))
     assert (
         env_drift > 100
     ), f"without HR the attack envelope should differ by prior state, got {env_drift:.0f}"
