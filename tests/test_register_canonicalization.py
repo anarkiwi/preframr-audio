@@ -118,11 +118,17 @@ def test_intra_frame_gate_toggles_take_effect():
     assert _max_diff(toggled, once) > EQUIVALENT_MAX_INT16_DELTA
 
 
-def test_freq_before_test_bit_is_audible_not_dont_care():
-    """Under real timing + canonical order, freq/PW are written BEFORE the TEST bit
-    (CTRL is the last write), so the oscillator runs at that freq until the reset
-    lands -- the value IS audible, therefore NOT discardable. (The clock-once model
-    that 'proved' it don't-care never reaches the renderer.)"""
+def test_test_bit_frame_pw_is_audible_but_freq_is_not():
+    """On a frame whose CTRL sets the TEST bit (written last, canonical order), the
+    writes before it run for the brief pre-TEST inter-write window. PW takes effect
+    immediately -- it is the pulse-compare threshold -- so test-bit-frame PW IS
+    audible and must NOT be discarded. Freq only advances the oscillator phase, which
+    is negligible over that window, and the TEST reset then zeroes the accumulator, so
+    test-bit-frame freq is inaudible and IS discardable. (The old clock-once model
+    collapsed the inter-write window and wrongly showed both don't-care; measured
+    isolated under real per-write timing: freq Δ<=16, PW Δ>6000.) The companion
+    freq-absorption proof is test_freq_write_audibility.test_freq_during_test_bit_is_inaudible.
+    """
 
     def run(freq, pw):
         sid = _make_sid()
@@ -147,7 +153,14 @@ def test_freq_before_test_bit_is_audible_not_dont_care():
             ]
         )
 
-    assert _max_diff(run(0x0880, 0x800), run(0xFFFF, 0x000)) > AUDIBLE_MIN_INT16_DELTA
+    freq_only = _max_diff(run(0x0880, 0x0800), run(0xFFFF, 0x0800))  # PW fixed
+    pw_only = _max_diff(run(0x0880, 0x0800), run(0x0880, 0x0000))  # freq fixed
+    assert (
+        freq_only <= EQUIVALENT_MAX_INT16_DELTA
+    ), f"test-bit-frame freq should be inaudible (discardable); got {freq_only}"
+    assert (
+        pw_only > AUDIBLE_MIN_INT16_DELTA
+    ), f"test-bit-frame PW should be audible (not discardable); got {pw_only}"
 
 
 # ---- EQUIVALENCES (safe to canonicalise) ----
