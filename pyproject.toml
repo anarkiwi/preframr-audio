@@ -47,7 +47,7 @@ Issues = "https://github.com/anarkiwi/preframr-audio/issues"
 packages = ["preframr_audio"]
 
 [tool.setuptools_scm]
-fallback_version = "0.5.3"
+fallback_version = "0.5.4"
 
 [tool.pytest.ini_options]
 minversion = "7.0"
