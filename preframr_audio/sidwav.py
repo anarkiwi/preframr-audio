@@ -11,9 +11,13 @@ def default_sid():
 
 
 def sidq(sid=None):
+    """Seconds per SID clock cycle for this chip's real clock (PAL 985248 Hz,
+    NTSC 1022730 Hz). ``reset_diffs`` multiplies cycle deltas by this and the
+    renderer multiplies back by ``clock_frequency``, so it must be ``1/clock``;
+    the old ``clock/1e6/1e6`` only held at exactly 1 MHz and ran PAL ~3% fast."""
     if sid is None:
         sid = default_sid()
-    return sid.clock_frequency / 1e6 / 1e6
+    return 1.0 / sid.clock_frequency
 
 
 def write_reg(sid, reg, val, reg_widths):

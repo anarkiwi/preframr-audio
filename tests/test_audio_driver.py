@@ -13,6 +13,7 @@ import scipy.io.wavfile
 
 from preframr_audio._reg_mappers import FreqMapper
 from preframr_audio.audio_driver import (
+    _HAVE_RESID,
     _HAVE_RTMIDI,
     ASID_MANID,
     ASID_REG_TO_SLOT,
@@ -39,6 +40,42 @@ from preframr_audio.audio_driver import (
     render_to_wav,
 )
 from preframr_audio.sidwav import sidq
+
+
+@unittest.skipUnless(_HAVE_RESID, "pyresidfp required")
+class TestNegativeDelayCarry(unittest.TestCase):
+    """A skeleton-owned stream emits negative per-frame delay corrections (reset_diffs subtracts the
+    intra-frame total); the worker must clock the running NET, not drop negatives. Dropping them clocks
+    the positives only and over-runs the render (the ~3.5x stretch)."""
+
+    def _clocked_samples(self, delays):
+        buf = AudioRenderBuffer(max_frames=64)
+        sink = WavSampleSink()
+        worker = ResidWorker(buf, sink=sink, chip_model="MOS8580")
+        worker.start()
+        for i, d in enumerate(delays):
+            buf.push_frame(
+                FramePacket(
+                    frame_id=i,
+                    ops=[FrameOp(reg=-1, val=0, delay_cycles=d)],
+                    total_cycles=0,
+                )
+            )
+        buf.close()
+        worker.join(timeout=30.0)
+        return len(sink.to_array()), worker.clock_frequency, worker.sampling_frequency
+
+    def test_negative_delay_offsets_prior_positive(self):
+        n_pos, clk, sf = self._clocked_samples([20000, 20000])
+        n_net, _, _ = self._clocked_samples([20000, -10000, 20000])
+        self.assertAlmostEqual(n_net, int(30000 / clk * sf), delta=sf // 200)
+        self.assertLess(
+            n_net, n_pos
+        )  # the negative correction reduced clocked time, not ignored
+
+    def test_negative_only_clocks_nothing(self):
+        n, _, _ = self._clocked_samples([-5000, -5000])
+        self.assertEqual(n, 0)
 
 
 class TestFramePacket(unittest.TestCase):

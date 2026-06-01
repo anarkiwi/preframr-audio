@@ -373,6 +373,7 @@ class ResidWorker(threading.Thread):
         return int(self.sid.clock_frequency)
 
     def run(self):
+        delay_carry = 0
         while not self.stop_evt.is_set():
             pkt = self.buffer.pop_frame(timeout=0.1)
             if pkt is None:
@@ -384,8 +385,10 @@ class ResidWorker(threading.Thread):
                 if op.reg >= 0:
                     val = 0 if int(op.reg) in self._muted_ctrl_regs else int(op.val)
                     self.sid.write_register(int(op.reg), val)
-                if op.delay_cycles > 0:
-                    seconds = op.delay_cycles / self.clock_frequency
+                delay_carry += op.delay_cycles
+                if delay_carry > 0:
+                    seconds = delay_carry / self.clock_frequency
+                    delay_carry = 0
                     samples = self.sid.clock(timedelta(seconds=seconds))
                     samples = np.asarray(samples, dtype=np.int16)
                     if len(samples):
@@ -1362,6 +1365,7 @@ def play_via_aplay(  # pragma: no cover
 
     init_ops = _reg_start_init_ops(reg_start, reg_widths, freq_mapper)
     n_samples = 0
+    delay_carry = 0
     try:
         for op in init_ops:
             if op.reg >= 0:
@@ -1388,8 +1392,10 @@ def play_via_aplay(  # pragma: no cover
                         pass
                     else:
                         sid.write_register(int(op.reg), int(op.val))
-                if op.delay_cycles > 0:
-                    seconds = op.delay_cycles / sid.clock_frequency
+                delay_carry += op.delay_cycles
+                if delay_carry > 0:
+                    seconds = delay_carry / sid.clock_frequency
+                    delay_carry = 0
                     samples = sid.clock(timedelta(seconds=seconds))
                     samples = np.asarray(samples, dtype=np.int16)
                     if len(samples):
