@@ -2,11 +2,13 @@
 timing: it clocks ~``_MIN_DIFF`` cycles after each write, so intra-frame order and
 repeated writes take effect -- they are NOT collapsed by a single end-of-frame clock.
 
-These pin what the tokenizer must PRESERVE: intra-frame write order is audible, so the
-stream must be EMITTED in canonical ascending order (freq, PW, CTRL, AD, SR; filter
-last), never reordered after the fact, and multiple CTRL writes must be kept in time
-order. A value that is audible is not discardable. Only genuinely redundant writes
-(same value) are free to collapse (``_squeeze_changes``).
+These pin what the tokenizer must PRESERVE: intra-frame write order is audible, so each
+voice's writes must stay in their INPUT order (never sorted by register number) -- the
+gate must stay in place relative to the freq it gates and the AD/SR writes around it,
+because the SID ADSR bug makes envelope behaviour order- and value-dependent (see
+``test_adsr_bug_attack_depends_on_prior_envelope_state``). Multiple CTRL/AD/SR writes
+are kept in time order. A value that is audible is not discardable; only genuinely
+redundant writes (same value) are free to collapse (``_squeeze_changes``).
 
 Proven against pyresidfp.
 """
@@ -76,10 +78,10 @@ def _settle(sid):
 # repeated writes take effect. These pin what the stream must emit / preserve.
 
 
-def test_intra_frame_write_order_matters_so_emit_canonical():
+def test_intra_frame_write_order_is_audible():
     """Intra-frame write ORDER is audible under real timing: a CTRL/gate written
-    before its freq attacks at the wrong pitch. So the pipeline must EMIT canonical
-    ascending order (freq, PW, then CTRL), not reorder/collapse arbitrary orders."""
+    before the freq it gates attacks at the wrong pitch. So the encoder must preserve
+    each voice's INPUT write order (gate after the freq it gates), not reorder it."""
 
     def run(order):
         sid = _make_sid()
@@ -89,15 +91,21 @@ def test_intra_frame_write_order_matters_so_emit_canonical():
             out.append(_frame(sid, [(4, 0x41)]))
         return np.concatenate(out)
 
-    canonical = [(0, 0x80), (1, 0x10), (2, 0x00), (3, 0x08), (4, 0x41)]  # freq,PW,CTRL
+    input_order = [
+        (0, 0x80),
+        (1, 0x10),
+        (2, 0x00),
+        (3, 0x08),
+        (4, 0x41),
+    ]  # freq,PW,gate
     gate_first = [
         (4, 0x41),
         (0, 0x80),
         (1, 0x10),
         (2, 0x00),
         (3, 0x08),
-    ]  # gate before freq
-    assert _max_diff(run(canonical), run(gate_first)) > AUDIBLE_MIN_INT16_DELTA
+    ]  # gate before its freq (a reorder)
+    assert _max_diff(run(input_order), run(gate_first)) > AUDIBLE_MIN_INT16_DELTA
 
 
 def test_intra_frame_gate_toggles_take_effect():
@@ -116,6 +124,69 @@ def test_intra_frame_gate_toggles_take_effect():
     toggled = run([(4, 0x41), (4, 0x40), (4, 0x41)])
     once = run([(4, 0x41)])
     assert _max_diff(toggled, once) > EQUIVALENT_MAX_INT16_DELTA
+
+
+def test_interleaved_adsr_ctrl_order_is_audible():
+    """Real multi-ADSR frame (HVSC X-Theme_1, voice 0, single-speed): the gate fires
+    BETWEEN two distinct SR writes -- SR=111, gate(noise), AD=4, SR=104. Reordering to
+    register-ascending (gate, AD, SR, SR) fires the gate against a different envelope
+    state and changes the audio. So the encoder must preserve the within-voice INPUT
+    write order for in-flight envelope edits -- it must NOT sort registers ascending.
+    ~17% of single-speed tunes contain such interleaved ADSR/CTRL frames."""
+
+    def run(target):
+        sid = _make_sid()
+        sid.write_register(24, 0x0F)  # volume
+        _frame(sid, [(0, 248), (1, 238)])  # freq
+        _frame(sid, [])
+        _frame(
+            sid, [(6, 32), (5, 15), (4, 128)]
+        )  # prior: SR=32, AD=15, noise, gate off
+        _frame(sid, [])
+        out = [_frame(sid, target)]
+        out.append(_frame(sid, [(0, 1), (1, 14)]))
+        for _ in range(16):  # let the gated noise envelope play out
+            out.append(_frame(sid, []))
+        return np.concatenate(out)
+
+    input_order = [(6, 111), (4, 0x81), (5, 4), (6, 104)]  # SR, gate(noise), AD, SR
+    ascending = [
+        (4, 0x81),
+        (5, 4),
+        (6, 111),
+        (6, 104),
+    ]  # register-ascending: gate first
+    assert _max_diff(run(input_order), run(ascending)) > AUDIBLE_MIN_INT16_DELTA
+
+
+def test_adsr_bug_attack_depends_on_prior_envelope_state():
+    """The SID ADSR bug, reproduced against pyresidfp -- the root reason intra-frame
+    AD/SR/gate write order and values are load-bearing. The envelope rate prescaler is
+    compared for EQUALITY, not >= (codebase64 'classic hard-restart and about ADSR';
+    c64-wiki 'ADSR-Bug'), so its count carries across gate edges: a re-gated note's
+    ATTACK depends on how long the PRIOR note was held. A bug-free envelope would
+    attack identically; here a 2- vs 11-frame pre-hold changes the re-attack by >500.
+    This is why the classic (gate-based) hard-restart exists, and why the encoder must
+    preserve write order/values rather than canonicalise them away."""
+
+    def regate(prehold_frames):
+        sid = _make_sid()
+        sid.write_register(24, 0x0F)  # volume
+        sid.write_register(0, 0x80)
+        sid.write_register(1, 0x20)  # freq
+        sid.write_register(5, 0x00)  # AD: attack 0, decay 0
+        sid.write_register(6, 0xF8)  # SR: sustain 15, release 8
+        _frame(sid, [(4, 0x11)])  # gate on (triangle)
+        for _ in range(prehold_frames):
+            _frame(sid, [])  # hold at sustain
+        _frame(sid, [(4, 0x10)])  # gate off -> release
+        _frame(sid, [])
+        out = [_frame(sid, [(4, 0x11)])]  # re-gate -> attack
+        for _ in range(3):
+            out.append(_frame(sid, []))  # the re-attack transient
+        return np.concatenate(out)
+
+    assert _max_diff(regate(2), regate(11)) > AUDIBLE_MIN_INT16_DELTA
 
 
 def test_test_bit_frame_pw_is_audible_but_freq_is_not():
