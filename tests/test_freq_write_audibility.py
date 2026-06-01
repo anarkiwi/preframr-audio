@@ -10,9 +10,14 @@ write on a wrong mental model of the envelope/oscillator:
     Writing a different freq during gate-off/release changes the output.
   * **The NOISE waveform's freq is the noise pitch/colour -- fully audible.** A
     noise frame's freq is real content, not discardable timbre.
-  * **The TEST bit (ctrl bit 3) resets the oscillator**, so a freq write while
-    test is set does NOT reach the output -- the ONE freq write that is safe to
-    absorb. Songs use the test bit per note as a HARD RESTART: it zeroes the
+  * **The TEST bit (ctrl bit 3) resets the oscillator**, so a freq write on a
+    test-bit frame is (near-)inaudible -- safe to absorb to a NEARBY value. Real
+    per-write timing caveat: freq is written BEFORE the test byte (canonical order)
+    so it runs for a brief pre-TEST window; a wild multi-octave triangle jump leaks
+    there (so absorb to the adjacent note's freq, not an arbitrary constant), and
+    **PW on a test-bit frame IS audible** (the pulse threshold takes effect in that
+    window) -- not absorbable. Songs use the test bit per note as a HARD RESTART: it
+    zeroes the
     oscillator accumulator so each note attacks from a consistent phase (it also
     reduces the attack's dependence on the prior oscillator state -- measured:
     prehold-2-vs-11 attack max|Δ| 9785 without test -> 5462 with). *Foobar*-style
@@ -26,9 +31,11 @@ write on a wrong mental model of the envelope/oscillator:
     while gate + sustain are held; a test-bit write re-seeds the LFSR. So a
     noise-combo frame's freq still matters and the LFSR state is path-dependent.
 
-Conclusion for the encoder: only freq writes on **test-bit frames** may be
-absorbed. Noise-frame, combined-waveform, and release-frame freqs must be encoded
-(audible), even though they are not melodic pitch.
+Conclusion for the encoder: a freq write on a **test-bit frame** may be absorbed
+only to a NEARBY value (see the real-timing caveat above). Noise-frame,
+combined-waveform, and release-frame freqs are fully audible and must be encoded,
+even though they are not melodic pitch. PW on a test-bit frame is audible -- see
+``test_register_canonicalization.test_test_bit_frame_pw_is_audible_but_freq_is_not``.
 """
 
 from __future__ import annotations
@@ -43,6 +50,8 @@ SoundInterfaceDevice = pyresidfp.SoundInterfaceDevice
 ChipModel = pyresidfp.sound_interface_device.ChipModel
 
 PAL_FRAME_SECONDS = 1.0 / 50.123
+PAL_CLOCK_HZ = 985248
+INTER_WRITE_SECONDS = 32 / PAL_CLOCK_HZ  # nominal _MIN_DIFF gap between writes
 INAUDIBLE_MAX_INT16_DELTA = 16  # cf. test_sid_same_value_writes
 AUDIBLE_MIN_INT16_DELTA = 500
 
@@ -57,11 +66,24 @@ def _make_sid():
 
 
 def _frame(sid, writes):
-    """Apply ``writes`` then clock exactly one PAL frame; return int16 samples."""
-    for reg, val in writes:
+    """Clock each write through with a nominal inter-write gap, then hold the
+    remainder of the frame -- matching the renderer, which clocks ~_MIN_DIFF cycles
+    after each write (NOT a single end-of-frame clock). So writes within a frame take
+    effect in sequence; absorption claims proven here therefore hold for the real
+    render path, not just an idealised simultaneous-write model."""
+    chunks = []
+    held = 0.0
+    n = len(writes)
+    for i, (reg, val) in enumerate(writes):
         sid.write_register(reg, val)
-    chunk = sid.clock(timedelta(seconds=PAL_FRAME_SECONDS))
-    return np.asarray(chunk if chunk else [], dtype=np.int16)
+        dur = INTER_WRITE_SECONDS if i < n - 1 else max(PAL_FRAME_SECONDS - held, 0.0)
+        held += dur
+        chunk = sid.clock(timedelta(seconds=dur))
+        chunks.append(np.asarray(chunk if chunk else [], dtype=np.int16))
+    if not writes:
+        chunk = sid.clock(timedelta(seconds=PAL_FRAME_SECONDS))
+        chunks.append(np.asarray(chunk if chunk else [], dtype=np.int16))
+    return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
 
 
 def _rms(a):
@@ -230,25 +252,28 @@ def test_noise_combined_with_pulse_lfsr_lock_decays():
     )
 
 
-def test_real_tune_test_bit_hr_freq_is_absorbable():
+def test_real_tune_test_bit_hr_freq_absorbable_to_a_nearby_value():
     """Derived from Wiklund *Facemorph*: its per-note hard restart is a test-bit
-    frame (ctrl ``0x19`` = tri+gate+test, then ``0x09``). Replaying that real HR
-    with two very different frequencies on the test frames yields the same audio --
-    so those (and only those) freq writes are safe for the encoder to absorb."""
+    frame (ctrl ``0x19`` = tri+gate+test, then ``0x09``). Under real per-write timing
+    the freq is written BEFORE the test byte (canonical order), so it runs for the
+    brief pre-TEST inter-write window -- it is NOT a free any-value don't-care. For
+    triangle, a *wild* (multi-octave) HR freq leaks through that window and IS heard;
+    but absorbing the HR freq to a NEARBY value (the adjacent note's pitch, sub-octave)
+    is inaudible. So the encoder may absorb an HR-frame freq to the neighbouring note's
+    freq -- not to an arbitrary constant."""
 
     def run(hr_freq):
         sid = _make_sid()
-        # a settled triangle note (Facemorph's voice 0 is tri/pulse lead)
+        # a settled triangle note (Facemorph's voice 0 is tri/pulse lead) at 0x1080
         sid.write_register(5, 0x00)
         sid.write_register(6, 0xB9)  # real Facemorph SR
         sid.write_register(24, 0x0F)
         sid.write_register(0, 0x80)
         sid.write_register(1, 0x10)
-        _frame(sid, [(4, 0x11)])  # triangle + gate
-        for _ in range(4):
-            _frame(sid, [(4, 0x11)])
+        for _ in range(5):
+            _frame(sid, [(4, 0x11)])  # triangle + gate
         out = []
-        # real Facemorph HR: test-bit frames with a freq write we want to absorb
+        # real Facemorph HR: test-bit frames carrying the freq we want to absorb
         for ctrl in (0x19, 0x09):  # tri+gate+test, then gate+test
             out.append(
                 _frame(
@@ -260,7 +285,12 @@ def test_real_tune_test_bit_hr_freq_is_absorbable():
             out.append(_frame(sid, [(4, 0x11)]))
         return np.concatenate(out)
 
-    mx = _wave_max_diff(run(0x0880), run(0xFFFF))
+    nearby = _wave_max_diff(run(0x1080), run(0x1180))  # ~2 semitones from the note
+    wild = _wave_max_diff(run(0x1080), run(0xFFFF))  # multi-octave jump
     assert (
-        mx <= INAUDIBLE_MAX_INT16_DELTA
-    ), f"real-tune HR test-bit freq moved the wave by {mx}; should be absorbable"
+        nearby <= INAUDIBLE_MAX_INT16_DELTA
+    ), f"absorbing HR freq to a nearby value should be inaudible; got {nearby}"
+    assert wild > AUDIBLE_MIN_INT16_DELTA, (
+        f"a wild HR-freq jump IS heard in the pre-TEST window (triangle); got {wild} "
+        f"-- so absorb to the adjacent note's freq, not an arbitrary constant"
+    )
