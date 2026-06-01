@@ -16,9 +16,10 @@ class TestSidwavHelpers(unittest.TestCase):
         self.assertGreater(sid.sampling_frequency, 0)
 
     def test_sidq_inverse_of_clock_frequency(self):
-        q = sidq()
-        self.assertGreater(q, 9e-7)
-        self.assertLess(q, 1.1e-6)
+        sid = default_sid()
+        q = sidq(sid)
+        self.assertAlmostEqual(q, 1.0 / sid.clock_frequency, places=12)
+        self.assertAlmostEqual(q * sid.clock_frequency, 1.0, places=9)
 
 
 class TestSidNullDelay(unittest.TestCase):
