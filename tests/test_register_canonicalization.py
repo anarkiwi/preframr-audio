@@ -1,15 +1,18 @@
-"""Emulator-proven register-write EQUIVALENCES (and non-equivalences) -- the basis
-for canonicalising the token stream: if two writes/orders render the same audio, the
-tokenizer may collapse them to one form, cutting variation the model must learn.
+"""Emulator-proven register-write behaviours under the renderer's REAL per-write
+timing: it clocks ~``_MIN_DIFF`` cycles after each write, so intra-frame order and
+repeated writes take effect -- they are NOT collapsed by a single end-of-frame clock.
 
-Proven against pyresidfp. The parser already canonicalises intra-frame write ORDER
-(``_norm_pr_order``) and same-value writes (``_squeeze_changes``); these tests pin the
-*audio* basis for that plus the control-aware equivalences that are not yet exploited.
+These pin what the tokenizer must PRESERVE: intra-frame write order is audible, so the
+stream must be EMITTED in canonical ascending order (freq, PW, CTRL, AD, SR; filter
+last), never reordered after the fact, and multiple CTRL writes must be kept in time
+order. A value that is audible is not discardable. Only genuinely redundant writes
+(same value) are free to collapse (``_squeeze_changes``).
+
+Proven against pyresidfp.
 """
 
 from __future__ import annotations
 
-import itertools
 from datetime import timedelta
 
 import numpy as np
@@ -20,6 +23,10 @@ SoundInterfaceDevice = pyresidfp.SoundInterfaceDevice
 ChipModel = pyresidfp.sound_interface_device.ChipModel
 
 PAL_FRAME_SECONDS = 1.0 / 50.123
+PAL_CLOCK_HZ = 985248
+INTER_WRITE_SECONDS = (
+    32 / PAL_CLOCK_HZ
+)  # nominal _MIN_DIFF gap; each write takes effect
 EQUIVALENT_MAX_INT16_DELTA = 16  # the cycle-accounting floor (cf. same-value writes)
 AUDIBLE_MIN_INT16_DELTA = 500
 
@@ -34,10 +41,22 @@ def _make_sid():
 
 
 def _frame(sid, writes):
-    for reg, val in writes:
+    """Clock each write through with a nominal inter-write gap so multiple writes
+    in one frame take effect in sequence (not collapsed by a single end-of-frame
+    clock); the final write holds the remainder of the frame."""
+    chunks = []
+    held = 0.0
+    n = len(writes)
+    for i, (reg, val) in enumerate(writes):
         sid.write_register(reg, val)
-    chunk = sid.clock(timedelta(seconds=PAL_FRAME_SECONDS))
-    return np.asarray(chunk if chunk else [], dtype=np.int16)
+        dur = INTER_WRITE_SECONDS if i < n - 1 else max(PAL_FRAME_SECONDS - held, 0.0)
+        held += dur
+        c = sid.clock(timedelta(seconds=dur))
+        chunks.append(np.asarray(c if c else [], dtype=np.int16))
+    if not writes:
+        c = sid.clock(timedelta(seconds=PAL_FRAME_SECONDS))
+        chunks.append(np.asarray(c if c else [], dtype=np.int16))
+    return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
 
 
 def _max_diff(a, b):
@@ -52,13 +71,15 @@ def _settle(sid):
         sid.write_register(reg, val)
 
 
-# ---- EQUIVALENCES (safe to canonicalise) ----
+# ---- MUST PRESERVE under the renderer's real per-write timing (NOT collapsible) ----
+# The renderer clocks ~_MIN_DIFF cycles after each write, so intra-frame order and
+# repeated writes take effect. These pin what the stream must emit / preserve.
 
 
-def test_intra_frame_write_order_is_equivalent():
-    """The order of register writes WITHIN one frame does not change the audio --
-    only the frame's final per-register state matters. (Justifies _norm_pr_order's
-    canonical ordering.)"""
+def test_intra_frame_write_order_matters_so_emit_canonical():
+    """Intra-frame write ORDER is audible under real timing: a CTRL/gate written
+    before its freq attacks at the wrong pitch. So the pipeline must EMIT canonical
+    ascending order (freq, PW, then CTRL), not reorder/collapse arbitrary orders."""
 
     def run(order):
         sid = _make_sid()
@@ -68,17 +89,21 @@ def test_intra_frame_write_order_is_equivalent():
             out.append(_frame(sid, [(4, 0x41)]))
         return np.concatenate(out)
 
-    base = [(0, 0x80), (1, 0x10), (2, 0x00), (3, 0x08), (4, 0x41)]
-    ref = run(base)
-    worst = max(_max_diff(ref, run(p)) for p in itertools.permutations(base))
-    assert (
-        worst <= EQUIVALENT_MAX_INT16_DELTA
-    ), f"intra-frame write order should be inaudible, worst max|Δ|={worst}"
+    canonical = [(0, 0x80), (1, 0x10), (2, 0x00), (3, 0x08), (4, 0x41)]  # freq,PW,CTRL
+    gate_first = [
+        (4, 0x41),
+        (0, 0x80),
+        (1, 0x10),
+        (2, 0x00),
+        (3, 0x08),
+    ]  # gate before freq
+    assert _max_diff(run(canonical), run(gate_first)) > AUDIBLE_MIN_INT16_DELTA
 
 
-def test_intra_frame_redundant_gate_toggles_collapse():
-    """Gate on->off->on within ONE frame is equivalent to a single gate-on -- only
-    the frame's final gate state matters (intermediate toggles are inaudible)."""
+def test_intra_frame_gate_toggles_take_effect():
+    """Multiple CTRL writes in one frame (gate on->off->on, or the TEST/un-TEST
+    pattern) each take effect under real timing -- they do NOT collapse to the final
+    gate state, so they must be kept in time order, never merged."""
 
     def run(ctrl_writes):
         sid = _make_sid()
@@ -90,22 +115,21 @@ def test_intra_frame_redundant_gate_toggles_collapse():
 
     toggled = run([(4, 0x41), (4, 0x40), (4, 0x41)])
     once = run([(4, 0x41)])
-    assert _max_diff(toggled, once) <= EQUIVALENT_MAX_INT16_DELTA
+    assert _max_diff(toggled, once) > EQUIVALENT_MAX_INT16_DELTA
 
 
-def test_freq_and_pw_on_a_test_frame_are_dont_care():
-    """On a frame where the voice has the TEST bit set, freq and PW writes do not
-    reach the output (oscillator held in reset). So a test-frame's freq/PW value can
-    be canonicalised (e.g. to the surrounding value), removing a spurious distinct
-    value -- this is the proven, SAFE version of absorbing the HR-window freq."""
+def test_freq_before_test_bit_is_audible_not_dont_care():
+    """Under real timing + canonical order, freq/PW are written BEFORE the TEST bit
+    (CTRL is the last write), so the oscillator runs at that freq until the reset
+    lands -- the value IS audible, therefore NOT discardable. (The clock-once model
+    that 'proved' it don't-care never reaches the renderer.)"""
 
     def run(freq, pw):
         sid = _make_sid()
         _settle(sid)
         for reg, val in [(0, 0x80), (1, 0x10), (2, 0x00), (3, 0x08)]:
             sid.write_register(reg, val)
-        _frame(sid, [(4, 0x41)])
-        for _ in range(3):
+        for _ in range(4):
             _frame(sid, [(4, 0x41)])
         return np.concatenate(
             [
@@ -123,9 +147,10 @@ def test_freq_and_pw_on_a_test_frame_are_dont_care():
             ]
         )
 
-    assert (
-        _max_diff(run(0x0880, 0x800), run(0xFFFF, 0x000)) <= EQUIVALENT_MAX_INT16_DELTA
-    )
+    assert _max_diff(run(0x0880, 0x800), run(0xFFFF, 0x000)) > AUDIBLE_MIN_INT16_DELTA
+
+
+# ---- EQUIVALENCES (safe to canonicalise) ----
 
 
 def test_sync_with_a_non_oscillating_source_is_a_noop():
