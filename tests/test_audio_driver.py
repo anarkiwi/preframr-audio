@@ -336,6 +336,66 @@ class TestRenderToWav(unittest.TestCase):
         self.assertGreater(dstd(voices[0], voices[2]), 100.0)
         self.assertLess(dstd(voices[1], voices[2]), 10.0)
 
+    def test_render_per_voice_captures_sync_ring_modulator(self):
+        # Lock the per-voice sync/ring coupling: render_per_voice mutes other
+        # voices' *outputs* but keeps their oscillators clocking, so a voice
+        # rendered in isolation still receives its modulator. SID wires the
+        # modulator as the ring-adjacent voice (osc N <- osc N-1, wrap-around),
+        # so voice 1 (0-indexed) is modulated by voice 0. With SYNC/RING set on
+        # voice 1, changing ONLY voice 0's frequency must change voice 1's solo
+        # render -- proving voice 0's oscillator is present in it. Without
+        # SYNC/RING it must not. If this regresses, per-voice fidelity under
+        # sync/ring is invalid and the perceptual gate's per-voice mode is wrong.
+        def df_for(mod_note, carrier_ctrl):
+            rows = [
+                (0, 0, 24, 15),  # master volume
+                # voice 0 modulator: fast attack, max sustain, freq, tri+gate
+                (0, 0, 5, 0x00),
+                (0, 0, 6, 0xF0),
+                (0, 0, 0, mod_note),
+                (0, 0, 4, 0x11),
+                # voice 1 carrier (modulated by voice 0): AD/SR, freq, ctrl
+                (0, 0, 12, 0x00),
+                (0, 0, 13, 0xF0),
+                (0, 0, 7, 120),
+                (0, 0, 11, carrier_ctrl),
+            ] + [(0, 19656, -128, 0)] * 10
+            df = pd.DataFrame(rows, columns=["op", "diff", "reg", "val"])
+            df["delay"] = df["diff"] * sidq()
+            return df
+
+        rw = {0: 2, 7: 2, 4: 1, 5: 1, 6: 1, 11: 1, 12: 1, 13: 1, 24: 1}
+
+        def carrier_solo_shift(carrier_ctrl):
+            a = render_per_voice(df_for(100, carrier_ctrl), reg_widths=rw, irq=19656)
+            b = render_per_voice(df_for(140, carrier_ctrl), reg_widths=rw, irq=19656)
+            n = min(len(a[1]), len(b[1]))
+            return float(
+                np.sqrt(np.mean((a[1][:n].astype(np.float64) - b[1][:n]) ** 2))
+            )
+
+        sync_shift = carrier_solo_shift(0x13)  # tri + gate + SYNC (bit 1)
+        ring_shift = carrier_solo_shift(0x15)  # tri + gate + RING (bit 2)
+        plain_shift = carrier_solo_shift(0x11)  # tri + gate, no modulation
+        self.assertGreater(
+            sync_shift,
+            500.0,
+            f"SYNC carrier solo did not track the modulator's freq "
+            f"({sync_shift:.1f}); the modulator oscillator is missing",
+        )
+        self.assertGreater(
+            ring_shift,
+            500.0,
+            f"RING carrier solo did not track the modulator's freq "
+            f"({ring_shift:.1f}); the modulator oscillator is missing",
+        )
+        self.assertLess(
+            plain_shift,
+            50.0,
+            f"without sync/ring the carrier solo should not depend on the "
+            f"modulator's freq, got {plain_shift:.1f}",
+        )
+
     def test_default_reg_start_used_when_none(self):
         df = pd.DataFrame(
             [(0, 19656, 24, 15), (0, 19656, -128, 0)],

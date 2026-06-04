@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from preframr_audio.features import (
+    DEFAULT_N_BANDS,
     DEFAULT_N_MELS,
     FEATURE_FNS,
+    band_power_features,
     mel_features,
     raw_pcm_features,
     spectral_features,
@@ -95,6 +97,47 @@ class TestSpectralFeatures:
         assert np.all(feat == 0.0)
 
 
+class TestBandPowerFeatures:
+    def test_output_shape_is_n_bands(self):
+        feat = band_power_features(_sine(440.0, SAMPLE_RATE), SAMPLE_RATE)
+        assert feat.shape == (DEFAULT_N_BANDS,)
+
+    def test_custom_n_bands(self):
+        feat = band_power_features(_sine(440.0, SAMPLE_RATE), SAMPLE_RATE, n_bands=16)
+        assert feat.shape == (16,)
+
+    def test_empty_input_returns_zeros(self):
+        feat = band_power_features(np.zeros(0, dtype=np.int16), SAMPLE_RATE)
+        assert feat.shape == (DEFAULT_N_BANDS,)
+        assert np.all(feat == 0.0)
+
+    def test_silence_is_finite_and_uniform(self):
+        feat = band_power_features(np.zeros(SAMPLE_RATE, dtype=np.int16), SAMPLE_RATE)
+        assert np.isfinite(feat).all()
+        # all-zero power -> uniform log-floor across bands
+        assert np.allclose(feat, feat[0])
+
+    def test_deterministic(self):
+        s = _sine(440.0, SAMPLE_RATE)
+        assert np.allclose(
+            band_power_features(s, SAMPLE_RATE), band_power_features(s, SAMPLE_RATE)
+        )
+
+    def test_distinguishes_different_frequencies(self):
+        low = band_power_features(_sine(220.0, SAMPLE_RATE), SAMPLE_RATE)
+        high = band_power_features(_sine(3000.0, SAMPLE_RATE), SAMPLE_RATE)
+        dist = np.linalg.norm(low - high)
+        assert dist > 1.0, f"220Hz and 3000Hz too similar in band space: {dist}"
+
+    def test_tolerant_to_small_pitch_shift(self):
+        # a sub-band detune leaves the band sums (and so the distance) tiny,
+        # while the large-shift distance above is big -- the whole point.
+        ref = band_power_features(_sine(440.0, SAMPLE_RATE), SAMPLE_RATE)
+        nudged = band_power_features(_sine(446.0, SAMPLE_RATE), SAMPLE_RATE)
+        big = band_power_features(_sine(3000.0, SAMPLE_RATE), SAMPLE_RATE)
+        assert np.linalg.norm(ref - nudged) < 0.25 * np.linalg.norm(ref - big)
+
+
 class TestRawPcmFeatures:
     def test_passes_through_normalised(self):
         samples = _sine(440.0, 1000)
@@ -111,6 +154,7 @@ class TestFeatureFnsRegistry:
     def test_all_registered(self):
         assert "mel" in FEATURE_FNS
         assert "spectral" in FEATURE_FNS
+        assert "band_power" in FEATURE_FNS
         assert "raw_pcm" in FEATURE_FNS
 
     def test_callables_match_signature(self):

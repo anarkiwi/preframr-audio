@@ -15,8 +15,11 @@ import numpy as np
 
 from preframr_audio.fidelity import (
     FRAME_RMS_TOLERANCE,
+    PERCEPTUAL_DISTANCE_THRESHOLD,
     AudioFidelityResult,
+    PerceptualFidelityResult,
     _render_df_samples,
+    dfs_perceptually_equivalent,
     dfs_render_equivalent,
 )
 
@@ -36,6 +39,11 @@ def _render_worker(item):
 def _verify_worker(item):
     idx, (df_a, df_b) = item
     return idx, dfs_render_equivalent(df_a, df_b, **_BATCH_KWARGS)
+
+
+def _verify_perceptual_worker(item):
+    idx, (df_a, df_b) = item
+    return idx, dfs_perceptually_equivalent(df_a, df_b, **_BATCH_KWARGS)
 
 
 def _run(items, worker, init_kwargs, n_workers, chunksize):
@@ -111,6 +119,41 @@ def verify_equivalent_batch(
             "chip_model": chip_model,
             "tolerance": tolerance,
             "max_frame_drift": max_frame_drift,
+        },
+        n_workers,
+        chunksize,
+    )
+
+
+def verify_perceptually_equivalent_batch(
+    pairs: Iterable[Tuple[object, object]],
+    *,
+    n_workers: int = -1,
+    chunksize: int = 1,
+    threshold: float = PERCEPTUAL_DISTANCE_THRESHOLD,
+    cents: int = 50,
+    chip_model: str = "MOS8580",
+    win_s: float = 1.0,
+) -> List[PerceptualFidelityResult]:
+    """Perceptual render-equivalence gate over many ``(df_a, df_b)`` pairs in
+    parallel -- the lossy-rendering (cents-binned / preset-rounded) accept/reject
+    step. Each worker renders both dfs and compares in-process, returning only
+    the small ``PerceptualFidelityResult`` (no sample arrays cross the process
+    boundary). Order matches the input. The perceptual sibling of
+    ``verify_equivalent_batch``.
+    """
+    seqs = list(pairs)
+    if not seqs:
+        return []
+    items = list(enumerate(seqs))
+    return _run(
+        items,
+        _verify_perceptual_worker,
+        {
+            "threshold": threshold,
+            "cents": cents,
+            "chip_model": chip_model,
+            "win_s": win_s,
         },
         n_workers,
         chunksize,

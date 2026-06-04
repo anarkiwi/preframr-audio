@@ -123,6 +123,48 @@ def spectral_features(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     return np.array([centroid, bandwidth, rolloff, zcr, rms], dtype=np.float64)
 
 
+DEFAULT_N_BANDS = 32
+DEFAULT_BAND_FMAX = 8000.0
+DEFAULT_BAND_FLOOR = 1e-3
+
+
+def band_power_features(
+    samples: np.ndarray,
+    sample_rate: int,
+    n_bands: int = DEFAULT_N_BANDS,
+    fmax: float = DEFAULT_BAND_FMAX,
+    floor: float = DEFAULT_BAND_FLOOR,
+) -> np.ndarray:
+    """Coarse linear-band log power *distribution*: one sharp real-FFT over the
+    whole input, summed into ``n_bands`` equal-width bands across ``[0, fmax]`` Hz,
+    normalised to sum 1, then log-compressed. Returns ``(n_bands,)``.
+
+    A deliberately pitch-tolerant spectral-envelope descriptor: a frequency shift
+    smaller than a band's width (``fmax / n_bands`` Hz) leaves the per-band sums
+    unchanged, so a sub-band detune reads as ~0, while timbre (waveform), filter
+    (cutoff), and voicing (drop/envelope) changes move energy *between* bands and
+    so read large. This is the complement of ``mel_features``: mel allocates
+    narrow bins to low frequencies and so reacts strongly to sub-semitone pitch
+    shifts of bass-heavy spectra (e.g. SID), which is exactly wrong for a
+    perceptual render-equivalence gate. Deterministic; pure numpy."""
+    if samples.size == 0:
+        return np.zeros(n_bands, dtype=np.float64)
+    s = samples.astype(np.float64)
+    peak = float(np.abs(s).max())
+    if peak > 0:
+        s = s / peak
+    power = np.abs(np.fft.rfft(s)) ** 2
+    freqs = np.fft.rfftfreq(len(s), 1.0 / sample_rate)
+    edges = np.linspace(0.0, fmax, n_bands + 1)
+    idx = np.clip(np.digitize(freqs, edges) - 1, 0, n_bands - 1)
+    bands = np.zeros(n_bands, dtype=np.float64)
+    np.add.at(bands, idx, power)
+    total = bands.sum()
+    if total > 0:
+        bands = bands / total
+    return np.log(bands + floor)
+
+
 def raw_pcm_features(samples: np.ndarray, _sample_rate: int) -> np.ndarray:
     """Pass-through: returns samples as float64 (normalised to [-1, 1] by peak). Caller-defined comparison via the resulting full-length vector."""
     if samples.size == 0:
@@ -137,5 +179,6 @@ def raw_pcm_features(samples: np.ndarray, _sample_rate: int) -> np.ndarray:
 FEATURE_FNS = {
     "mel": mel_features,
     "spectral": spectral_features,
+    "band_power": band_power_features,
     "raw_pcm": raw_pcm_features,
 }
