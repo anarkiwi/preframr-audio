@@ -206,6 +206,68 @@ def test_freq_during_test_bit_is_inaudible():
     )
 
 
+def _pre_gate_then_note(pre_gate_freq, hard_restart):
+    """Render frames that set a freq BEFORE any gate-on, then a gated note that re-writes its own
+    freq. Returns (pre_gate_wave, note_wave). ``hard_restart`` test-bits the note's first frame
+    (ctrl 0x49) to reset the oscillator phase, else it attacks from the carried-over phase.
+    """
+    sid = _make_sid()
+    sid.write_register(5, 0x09)
+    sid.write_register(6, 0xF0)
+    sid.write_register(24, 0x0F)
+    sid.write_register(2, 0x00)
+    sid.write_register(3, 0x08)
+    pre = [
+        _frame(sid, [(0, pre_gate_freq & 0xFF), (1, (pre_gate_freq >> 8) & 0xFF)])
+        for _ in range(4)
+    ]
+    note = []
+    if hard_restart:
+        note.append(_frame(sid, [(0, 0x80), (1, 0x08), (4, 0x49)]))
+    for _ in range(6):
+        note.append(_frame(sid, [(0, 0x80), (1, 0x08), (4, 0x41)]))
+    return np.concatenate(pre), np.concatenate(note)
+
+
+def test_freq_write_before_first_gate_on_is_inaudible_in_the_pre_gate_window():
+    """A frequency write at the START of a song, BEFORE the voice has ever been gated on, is
+    inaudible in that pre-gate window: the envelope has never been triggered, so the oscillator
+    frequency cannot reach the output. Two pre-gate windows with wildly different freqs render
+    (near-)identically."""
+    pre_low, _ = _pre_gate_then_note(0x0200, hard_restart=False)
+    pre_high, _ = _pre_gate_then_note(0xF000, hard_restart=False)
+    mx = _wave_max_diff(pre_low, pre_high)
+    assert mx <= INAUDIBLE_MAX_INT16_DELTA, (
+        f"a pre-first-gate freq change moved the pre-gate wave by {mx}; it must be "
+        f"inaudible (the un-gated voice emits no frequency-dependent output)"
+    )
+
+
+def test_pre_gate_freq_droppable_only_when_first_note_hard_restarts():
+    """The pre-gate freq is silent in itself, but it advances the oscillator PHASE, which carries
+    into the first note's attack: without an oscillator reset the dropped freq IS heard in that
+    attack, WITH a test-bit hard restart it is fully don't-care. So a pre-gate freq write is
+    audio-exact to drop only when the first note hard-restarts the oscillator."""
+    note_low_n, note_high_n = (
+        _pre_gate_then_note(0x0200, hard_restart=False)[1],
+        _pre_gate_then_note(0xF000, hard_restart=False)[1],
+    )
+    note_low_h, note_high_h = (
+        _pre_gate_then_note(0x0200, hard_restart=True)[1],
+        _pre_gate_then_note(0xF000, hard_restart=True)[1],
+    )
+    no_reset = _wave_max_diff(note_low_n, note_high_n)
+    with_reset = _wave_max_diff(note_low_h, note_high_h)
+    assert no_reset > AUDIBLE_MIN_INT16_DELTA, (
+        f"without an oscillator reset the pre-gate freq should leak into the first "
+        f"note's attack phase; got only {no_reset}"
+    )
+    assert with_reset <= INAUDIBLE_MAX_INT16_DELTA, (
+        f"a test-bit hard restart should reset the phase, making the pre-gate freq "
+        f"don't-care; got {with_reset}"
+    )
+
+
 @pytest.mark.parametrize(
     "wf, label",
     [(0x60, "pulse+saw"), (0x30, "tri+saw"), (0x50, "tri+pulse")],
