@@ -31,3 +31,18 @@ jobs:
         run: python -m build
       - name: Publish to PyPI (trusted publisher OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Wait until the published version is installable from PyPI
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "Confirming preframr-audio==${version} is installable from PyPI (CDN propagation)..."
+          for attempt in $(seq 1 40); do
+            if pip download --no-deps --no-cache-dir --dest /tmp/pypi-propagation-check \
+                "preframr-audio==${version}" >/dev/null 2>&1; then
+              echo "preframr-audio==${version} is installable (attempt ${attempt})."
+              exit 0
+            fi
+            echo "attempt ${attempt}: not yet visible on the PyPI index, retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::preframr-audio==${version} did not become installable within the timeout" >&2
+          exit 1
