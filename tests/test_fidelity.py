@@ -121,6 +121,23 @@ def test_compare_renders_per_voice_truncates_to_shorter():
     assert res[0].passed is True
 
 
+def test_compare_renders_per_voice_uses_key_intersection():
+    """Only voices present in BOTH maps are compared; one-sided voices are
+    silently dropped rather than raising or padding."""
+    a = _signal(DEFAULT_LEN)
+    res = compare_renders_per_voice(
+        {0: a, 1: a}, {1: a.copy(), 2: a.copy()}, SAMPLE_RATE
+    )
+    assert set(res) == {1}
+    assert res[1].passed is True
+
+
+def test_per_frame_rel_rms_zero_length_returns_empty():
+    empty = np.zeros(0, dtype=np.int16)
+    rel = per_frame_rel_rms(empty, empty, SAMPLE_RATE)
+    assert rel.shape == (0,)
+
+
 def test_initial_state_divergence():
     """Noise burst in the head N samples decays into a clean tail ->
     INITIAL_STATE_DIVERGENCE (head-RMS >> tail-RMS)."""
