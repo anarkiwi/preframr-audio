@@ -73,6 +73,14 @@ class TestMelFeatures:
         assert feat.shape == (2 * DEFAULT_N_MELS,)
         assert np.isfinite(feat).all()
 
+    def test_explicit_fmax_changes_binning(self):
+        s = _sine(4400.0, SAMPLE_RATE)
+        default_fmax = mel_features(s, SAMPLE_RATE)
+        narrow = mel_features(s, SAMPLE_RATE, fmax=2000.0)
+        assert narrow.shape == default_fmax.shape
+        assert np.isfinite(narrow).all()
+        assert not np.allclose(narrow, default_fmax)
+
 
 class TestSpectralFeatures:
     def test_output_shape_is_5(self):
@@ -136,6 +144,14 @@ class TestBandPowerFeatures:
         nudged = band_power_features(_sine(446.0, SAMPLE_RATE), SAMPLE_RATE)
         big = band_power_features(_sine(3000.0, SAMPLE_RATE), SAMPLE_RATE)
         assert np.linalg.norm(ref - nudged) < 0.25 * np.linalg.norm(ref - big)
+
+    def test_custom_fmax_changes_band_edges(self):
+        s = _sine(3000.0, SAMPLE_RATE)
+        default_bands = band_power_features(s, SAMPLE_RATE)
+        narrow = band_power_features(s, SAMPLE_RATE, fmax=2000.0)
+        assert narrow.shape == default_bands.shape
+        assert np.isfinite(narrow).all()
+        assert not np.allclose(narrow, default_bands)
 
 
 class TestRawPcmFeatures:

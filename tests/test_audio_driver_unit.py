@@ -187,6 +187,22 @@ class TestDfToPackets(unittest.TestCase):
         out = list(df_to_packets(df, reg_widths={}, freq_mapper=_NO_FREQ_MAPPER))
         self.assertEqual([p.frame_id for p in out], [0, 1])
 
+    def test_frame_id_start_offsets_frame_ids(self):
+        df = self._build_df(
+            [
+                {"reg": MODE_VOL_REG, "val": 1, "delay": 0.0},
+                {"reg": FRAME_REG, "val": 0, "delay": 0.0},
+                {"reg": MODE_VOL_REG, "val": 2, "delay": 0.0},
+                {"reg": FRAME_REG, "val": 0, "delay": 0.0},
+            ]
+        )
+        out = list(
+            df_to_packets(
+                df, reg_widths={}, freq_mapper=_NO_FREQ_MAPPER, frame_id_start=7
+            )
+        )
+        self.assertEqual([p.frame_id for p in out], [7, 8])
+
     def test_delay_reg_marker_advances_frame_id(self):
         df = self._build_df(
             [

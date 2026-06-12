@@ -37,6 +37,7 @@ from preframr_audio.audio_driver import (
     df_to_packets,
     encode_asid_update,
     render_per_voice,
+    render_to_samples,
     render_to_wav,
 )
 from preframr_audio.sidwav import sidq
@@ -125,6 +126,11 @@ class TestAudioRenderBuffer(unittest.TestCase):
         buf = AudioRenderBuffer(max_frames=8)
         buf.push_frame(FramePacket(frame_id=0))
         self.assertFalse(buf.replace_frame(99, [FrameOp(0, 0)]))
+
+    def test_push_returns_false_after_close(self):
+        buf = AudioRenderBuffer(max_frames=8)
+        buf.close()
+        self.assertFalse(buf.push_frame(FramePacket(frame_id=0), timeout=0.1))
 
     def test_concurrent_drain_preserves_order(self):
         buf = AudioRenderBuffer(max_frames=20)
@@ -304,6 +310,42 @@ class TestRenderToWav(unittest.TestCase):
             self.assertEqual(rate, 48000)
             self.assertEqual(len(samples), n)
             self.assertGreater(int(np.abs(samples).max()), 100)
+
+    def test_render_to_samples_mute_voices_zeroes_ctrl_writes(self):
+        # README contract: ``mute_voices`` zeroes the listed voices' control
+        # register output while keeping their oscillators running. So a muted
+        # render must (a) differ from the gated render and (b) equal -- within
+        # the chip's nondeterminism floor -- a render whose voice-0 CTRL
+        # writes are explicitly zeroed in the df.
+        def make_df(ctrl_val):
+            df = pd.DataFrame(
+                [
+                    (0, 0, 24, 15),
+                    (0, 0, 5, 0x09),
+                    (0, 0, 6, 0xF4),
+                    (0, 0, 0, 0x2000),
+                    (0, 0, 4, ctrl_val),
+                ]
+                + [(0, 19656, -128, 0)] * 6,
+                columns=["op", "diff", "reg", "val"],
+            )
+            df["delay"] = df["diff"] * sidq()
+            return df
+
+        rw = {0: 2, 4: 1, 5: 1, 6: 1, 24: 1}
+        loud, sr_a = render_to_samples(make_df(0x21), reg_widths=rw, irq=19656)
+        muted, sr_b = render_to_samples(
+            make_df(0x21), reg_widths=rw, irq=19656, mute_voices=(0,)
+        )
+        zeroed, _ = render_to_samples(make_df(0), reg_widths=rw, irq=19656)
+        self.assertEqual(sr_a, sr_b)
+
+        def dstd(x, y):
+            n = min(len(x), len(y))
+            return float(np.std(x[:n].astype(np.float64) - y[:n].astype(np.float64)))
+
+        self.assertGreater(dstd(loud, muted), 100.0)
+        self.assertLess(dstd(muted, zeroed), 10.0)
 
     def test_render_per_voice_isolates_active_voices(self):
         # Only voice 1 is gated; voices 2 and 3 have no writes.

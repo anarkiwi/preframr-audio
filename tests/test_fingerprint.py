@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from preframr_audio._sid_constants import FRAME_REG
-from preframr_audio.features import DEFAULT_N_MELS
+from preframr_audio.features import DEFAULT_N_BANDS, DEFAULT_N_MELS
 from preframr_audio.fingerprint import (
     DEFAULT_IRQ_PAL,
     _normalise_writes,
@@ -96,6 +96,11 @@ class TestFingerprintWrites:
     def test_spectral_feature(self):
         feat = fingerprint_writes([(0, 4, 0x21)], feature="spectral")
         assert feat.shape == (5,)
+        assert np.isfinite(feat).all()
+
+    def test_band_power_feature(self):
+        feat = fingerprint_writes([(0, 4, 0x21)], feature="band_power")
+        assert feat.shape == (DEFAULT_N_BANDS,)
         assert np.isfinite(feat).all()
 
     def test_custom_callable_feature(self):
